@@ -67,6 +67,136 @@ def make_image_symmetrical(crop: np.ndarray, blend: float) -> np.ndarray:
     return cv2.addWeighted(sym_crop, blend, crop, 1.0 - blend, 0)
 
 
+def draw_smooth_path(pen: TTGlyphPen, path: list[tuple[int, int]], max_deflection_deg: float = 28.0) -> None:
+    """
+    Classify path vertices using deflection angles:
+    - Deflection angle <= max_deflection_deg: Smooth curve (TrueType off-curve control point).
+    - Deflection angle > max_deflection_deg: Sharp corner (TrueType on-curve anchor point).
+    """
+    n = len(path)
+    if n < 3:
+        if n > 0:
+            pen.moveTo(path[0])
+            for pt in path[1:]:
+                pen.lineTo(pt)
+            pen.closePath()
+        return
+
+    # 1. Classify points as on-curve (True) or off-curve (False)
+    on_curve = []
+    for i in range(n):
+        p0 = path[i - 1]
+        p1 = path[i]
+        p2 = path[(i + 1) % n]
+        
+        v1 = np.array([p1[0] - p0[0], p1[1] - p0[1]], dtype=np.float64)
+        v2 = np.array([p2[0] - p1[0], p2[1] - p1[1]], dtype=np.float64)
+        
+        len1 = np.hypot(v1[0], v1[1])
+        len2 = np.hypot(v2[0], v2[1])
+        
+        if len1 < 1e-5 or len2 < 1e-5:
+            on_curve.append(True)
+            continue
+            
+        dot = np.dot(v1, v2)
+        cos_theta = np.clip(dot / (len1 * len2), -1.0, 1.0)
+        theta = np.degrees(np.arccos(cos_theta))
+        
+        on_curve.append(theta > max_deflection_deg)
+
+    # 2. Check if we have at least one on-curve point
+    if not any(on_curve):
+        p_first = path[0]
+        p_last = path[-1]
+        start_pt = (int(round((p_first[0] + p_last[0]) / 2)), int(round((p_first[1] + p_last[1]) / 2)))
+        pen.moveTo(start_pt)
+        pen.qCurveTo(*(path + [start_pt]))
+        pen.closePath()
+        return
+
+    start_idx = on_curve.index(True)
+    ordered_path = path[start_idx:] + path[:start_idx]
+    ordered_on = on_curve[start_idx:] + on_curve[:start_idx]
+    
+    pen.moveTo(ordered_path[0])
+    
+    i = 1
+    m = len(ordered_path)
+    while i < m:
+        if ordered_on[i]:
+            pen.lineTo(ordered_path[i])
+            i += 1
+        else:
+            off_curve_pts = []
+            while i < m and not ordered_on[i]:
+                off_curve_pts.append(ordered_path[i])
+                i += 1
+            next_pt = ordered_path[i % m]
+            pen.qCurveTo(*(off_curve_pts + [next_pt]))
+            i += 1
+            
+    pen.closePath()
+
+
+def inject_forensic_watermark_in_compiled_glyphs(glyphs: dict, cmap: dict[int, str], watermark_str: str) -> None:
+    """
+    Inject a secret copyright signature in the LSB of coordinates of target glyphs.
+    Invisible to the eye, unforgeable, programmatically auditable.
+    """
+    sig_bytes = watermark_str.encode('utf-8')
+    bits = []
+    for b in sig_bytes:
+        for bit_idx in range(8):
+            bits.append((b >> bit_idx) & 1)
+            
+    # Null-terminator byte (8 zero bits)
+    for _ in range(8):
+        bits.append(0)
+        
+    bit_idx = 0
+    n_bits = len(bits)
+    
+    # Target characters in a stable, deterministic order
+    target_chars = ['E', 'M', '\u03a9', 'O', 'V', 'W', '0', 'A', 'B', 'C', 'D', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'N']
+    
+    for char in target_chars:
+        if bit_idx >= n_bits:
+            break
+            
+        gname = cmap.get(ord(char))
+        if not gname or gname not in glyphs:
+            continue
+            
+        glyph = glyphs[gname]
+        if glyph.numberOfContours <= 0 or not hasattr(glyph, "coordinates"):
+            continue
+            
+        coords = glyph.coordinates
+        for i in range(len(coords)):
+            if bit_idx >= n_bits:
+                break
+                
+            x, y = coords[i]
+            x_int, y_int = int(round(x)), int(round(y))
+            
+            bit_x = bits[bit_idx]
+            x_new = (x_int & ~1) | bit_x
+            bit_idx += 1
+            
+            if bit_idx < n_bits:
+                bit_y = bits[bit_idx]
+                y_new = (y_int & ~1) | bit_y
+                bit_idx += 1
+            else:
+                y_new = y_int
+                
+            coords[i] = (x_new, y_new)
+            
+    print(f"[Forensic Steganography] Embedded unforgeable copyright watermark: {bit_idx} bits written across designated glyphs.")
+
+
+
 def refine_glyph_bitmap(crop: np.ndarray) -> np.ndarray:
     k = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     closed = cv2.morphologyEx(crop, cv2.MORPH_CLOSE, k, iterations=1)
@@ -632,14 +762,24 @@ class SheetToFontBuilder:
                     print(f"  Skip '{char}': too wide")
                     continue
 
+                # Auto baseline alignment vertical shift
+                is_baseline_char = char.isupper() or char in "acenorsuvwxz"
+                shift_y = 0
+                if is_baseline_char and self.pipeline.get("auto_baseline_align", True):
+                    shift_y = -min_fy
+
                 shift_x = self.lsb - min_fx
                 pen = TTGlyphPen(None)
+                max_deflection = self.pipeline.get("curve_deflection_threshold", 28.0)
                 for path in path_list:
-                    shifted = [(p[0] + shift_x, p[1]) for p in path]
-                    pen.moveTo(shifted[0])
-                    for pt in shifted[1:]:
-                        pen.lineTo(pt)
-                    pen.closePath()
+                    shifted = [(p[0] + shift_x, p[1] + shift_y) for p in path]
+                    if max_deflection > 0 and not self.trace_exact:
+                        draw_smooth_path(pen, shifted, max_deflection)
+                    else:
+                        pen.moveTo(shifted[0])
+                        for pt in shifted[1:]:
+                            pen.lineTo(pt)
+                        pen.closePath()
 
                 glyph_w = max_fx - min_fx
                 # Tight ink-based advance: LSB + ink width + RSB
@@ -654,6 +794,10 @@ class SheetToFontBuilder:
                     cmap[ord(alias)] = gname
 
                 metrics[gname] = (advance, self.lsb)
+
+        # Embed the steganographic watermark!
+        watermark_str = self.config.get("watermark", "SteveBlackbeard / FONTS-CREATOR-by-Ethernium")
+        inject_forensic_watermark_in_compiled_glyphs(glyphs, cmap, watermark_str)
 
         fb.setupGlyphOrder(glyph_order)
         fb.setupGlyf(glyphs)

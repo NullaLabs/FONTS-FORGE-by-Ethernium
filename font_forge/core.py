@@ -15,254 +15,25 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
 from font_forge.config import scale_rows
-
-
-def resolve_sheet_path(root: Path, sheet_name: str) -> Path:
-    exact = root / sheet_name
-    if exact.is_file():
-        return exact
-    for fallback in ("ethernium_sheet_hq.png", "ethernium_sheet.png"):
-        path = root / fallback
-        if path.is_file():
-            return path
-    raise FileNotFoundError(
-        f"No sheet found. Place '{sheet_name}' in {root}"
-    )
-
-
-def effective_upscale(width: int) -> int:
-    """HQ sheets need less upscaling to avoid blur."""
-    if width >= 3000:
-        return 1
-    if width >= 1500:
-        return 2
-    return 4
-
-
-def make_image_symmetrical(crop: np.ndarray, blend: float) -> np.ndarray:
-    pts = np.argwhere(crop > 0)
-    if len(pts) == 0:
-        return crop
-
-    xs = pts[:, 1]
-    xmin, xmax = xs.min(), xs.max()
-    center = (xmin + xmax) / 2.0
-    int_center = int(np.floor(center))
-    h, w = crop.shape
-    sym_crop = np.zeros_like(crop)
-
-    for x in range(0, int_center + 1):
-        mirrored_x = int(np.round(2 * center - x))
-        if 0 <= mirrored_x < w:
-            sym_crop[:, x] = crop[:, x]
-            sym_crop[:, mirrored_x] = crop[:, x]
-
-    if center.is_integer():
-        c_idx = int(center)
-        if 0 <= c_idx < w:
-            sym_crop[:, c_idx] = crop[:, c_idx]
-
-    if blend >= 1.0:
-        return sym_crop
-    return cv2.addWeighted(sym_crop, blend, crop, 1.0 - blend, 0)
-
-
-def refine_glyph_bitmap(crop: np.ndarray) -> np.ndarray:
-    k = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    closed = cv2.morphologyEx(crop, cv2.MORPH_CLOSE, k, iterations=1)
-    return cv2.addWeighted(closed, 0.55, crop, 0.45, 0)
-
-
-def smooth_binary_bitmap(crop: np.ndarray, pixel_scale: float) -> np.ndarray:
-    """Anti-aliasing threshold smoothing to remove jagged stair-step pixelation."""
-    # Ensure kernel size is odd and valid
-    k = 5 if pixel_scale >= 3.0 else 3
-    # Pad to prevent edge flattening during blur
-    padded = cv2.copyMakeBorder(crop, 6, 6, 6, 6, cv2.BORDER_CONSTANT, value=0)
-    blurred = cv2.GaussianBlur(padded, (k, k), 0)
-    _, smoothed = cv2.threshold(blurred, 110, 255, cv2.THRESH_BINARY)
-    return smoothed[6:-6, 6:-6]
-
-
-def snap_contour_points(pts: np.ndarray, snap_deg: float = 10.0) -> np.ndarray:
-    """Snap segment angles to 0/45/90 for crisp geometric strokes."""
-    if len(pts) < 3:
-        return pts
-
-    snapped = [pts[0].astype(np.float64)]
-    snap_targets = np.arange(0, 181, 45)
-    min_len = 6.0
-
-    for i in range(1, len(pts)):
-        prev = snapped[-1]
-        orig = pts[i].astype(np.float64)
-        dx, dy = orig[0] - prev[0], orig[1] - prev[1]
-        length = np.hypot(dx, dy)
-        if length < min_len:
-            snapped.append(orig)
-            continue
-
-        angle = np.degrees(np.arctan2(dy, dx)) % 180
-        best = snap_targets[np.argmin(np.abs(snap_targets - angle))]
-        if abs(best - angle) <= snap_deg:
-            rad = np.radians(best)
-            candidate = np.array(
-                [prev[0] + length * np.cos(rad), prev[1] + length * np.sin(rad)]
-            )
-            if np.hypot(candidate[0] - orig[0], candidate[1] - orig[1]) <= length * 0.35:
-                orig = candidate
-        snapped.append(orig)
-
-    return np.round(snapped).astype(np.int32)
-
-
-def simplify_colinear(points: list[tuple[int, int]], tol: float = 2.5) -> list[tuple[int, int]]:
-    """Drop middle points on nearly straight segments for cleaner outlines."""
-    if len(points) < 3:
-        return points
-    out = [points[0]]
-    for i in range(1, len(points) - 1):
-        ax, ay = out[-1]
-        bx, by = points[i]
-        cx, cy = points[i + 1]
-        area = abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax))
-        seg = np.hypot(cx - ax, cy - ay)
-        if seg > 0 and area / seg > tol:
-            out.append((bx, by))
-    out.append(points[-1])
-    return out
-
-
-def to_font_coord(abs_x, abs_y, x_min, baseline_y, scale, lsb):
-    """Map sheet pixels to font UPM; clamp to valid glyf range."""
-    fx = int((abs_x - x_min) * scale + lsb)
-    fy = int((baseline_y - abs_y) * scale)
-    fx = max(-500, min(1200, fx))
-    fy = max(-600, min(1100, fy))
-    return fx, fy
-
-
-def sharpen_gray(gray: np.ndarray, amount: float = 0.35) -> np.ndarray:
-    """Light unsharp mask — crisp edges on HQ sheets without changing geometry."""
-    blurred = cv2.GaussianBlur(gray, (0, 0), 1.2)
-    sharp = cv2.addWeighted(gray, 1.0 + amount, blurred, -amount, 0)
-    return np.clip(sharp, 0, 255).astype(np.uint8)
-
-
-def prepare_binary(gray: np.ndarray, fixed_thresh: int | None, sharpen: bool = False) -> np.ndarray:
-    """Sharp binarization: optional unsharp + median + threshold."""
-    work = sharpen_gray(gray) if sharpen else gray
-    denoised = cv2.medianBlur(work, 3)
-    if fixed_thresh is not None:
-        _, binary = cv2.threshold(denoised, fixed_thresh, 255, cv2.THRESH_BINARY)
-    else:
-        _, binary = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return binary
-
-
-def row_content_x_bounds(crop: np.ndarray, pixel_scale: float) -> tuple[int, int]:
-    """Left/right ink bounds for glyph grid (ignores far-right decorations)."""
-    proj = np.sum(crop > 0, axis=0).astype(np.float32)
-    if proj.max() == 0:
-        return 0, crop.shape[1]
-    thresh = proj.max() * 0.12
-    idx = np.where(proj >= thresh)[0]
-    x1, x2 = int(idx[0]), int(idx[-1]) + 1
-    # Drop isolated right-side ornaments (connectors, wide art)
-    max_orament_w = int(90 * pixel_scale)
-    scan_x = x2 - 1
-    while scan_x > x1 + int(200 * pixel_scale):
-        col = crop[:, max(x1, scan_x - 20) : scan_x + 1]
-        if col.size and np.sum(col > 0) > col.size * 0.02:
-            break
-        block = proj[max(x1, scan_x - max_orament_w) : scan_x + 1]
-        if block.size and block.max() >= thresh:
-            scan_x -= max_orament_w
-            continue
-        x2 = max(x1 + 1, scan_x)
-        break
-        scan_x -= max_orament_w
-    return x1, x2
-
-
-def extract_glyphs_grid(
-    crop: np.ndarray,
-    char_count: int,
-    pixel_scale: float,
-    pad: int | None = None,
-) -> list[tuple[int, int, int, int]]:
-    """Split row into equal slots — one glyph per cell, exact shapes from reference."""
-    if pad is None:
-        pad = max(1, int(2 * pixel_scale))
-    x1, x2 = row_content_x_bounds(crop, pixel_scale)
-    slot_w = (x2 - x1) / char_count
-    boxes = []
-    for i in range(char_count):
-        sx1 = int(x1 + i * slot_w) + pad
-        sx2 = int(x1 + (i + 1) * slot_w) - pad
-        if sx2 <= sx1:
-            sx2 = sx1 + 1
-        slot = crop[:, sx1:sx2]
-        pts = np.argwhere(slot > 0)
-        if len(pts) == 0:
-            boxes.append((sx1, 0, max(1, sx2 - sx1), crop.shape[0]))
-            continue
-        ys, xs = pts[:, 0], pts[:, 1]
-        gy1, gy2 = int(ys.min()), int(ys.max()) + 1
-        gx1, gx2 = int(xs.min()) + sx1, int(xs.max()) + sx1 + 1
-        boxes.append((gx1, gy1, gx2 - gx1, gy2 - gy1))
-    return boxes
-
-
-def merge_boxes(
-    boxes: list,
-    gap_px: int,
-    max_merge_width: int | None = None,
-) -> list[tuple[int, int, int, int]]:
-    if not boxes:
-        return []
-
-    merged = []
-    used: set[int] = set()
-
-    for i, b1 in enumerate(boxes):
-        if i in used:
-            continue
-        group = [b1]
-        used.add(i)
-        changed = True
-        while changed:
-            changed = False
-            for j, b2 in enumerate(boxes):
-                if j in used:
-                    continue
-                merge_ok = False
-                for member in group:
-                    x1, _, w1, _ = member[:4]
-                    x2, _, w2, _ = b2[:4]
-                    h_dist = max(0, max(x1, x2) - min(x1 + w1, x2 + w2))
-                    if h_dist <= gap_px:
-                        xs = [b[0] for b in group] + [x2]
-                        ws = [b[2] for b in group] + [w2]
-                        span = max(x + w for x, w in zip(xs, ws)) - min(xs)
-                        if max_merge_width and span > max_merge_width:
-                            continue
-                        merge_ok = True
-                        break
-                if merge_ok:
-                    group.append(b2)
-                    used.add(j)
-                    changed = True
-
-        xs = [b[0] for b in group]
-        ys = [b[1] for b in group]
-        ws = [b[2] for b in group]
-        hs = [b[3] for b in group]
-        min_x, max_x = min(xs), max(x + w for x, w in zip(xs, ws))
-        min_y, max_y = min(ys), max(y + h for y, h in zip(ys, hs))
-        merged.append((min_x, min_y, max_x - min_x, max_y - min_y))
-
-    return sorted(merged, key=lambda g: g[0])
+from font_forge.vision import (
+    resolve_sheet_path,
+    make_image_symmetrical,
+    refine_glyph_bitmap,
+    smooth_binary_bitmap,
+    prepare_binary,
+    extract_glyphs_grid,
+    merge_boxes,
+)
+from font_forge.vector import (
+    to_font_coord,
+    draw_smooth_path,
+    snap_contour_points,
+    simplify_colinear,
+    refine_contour_subpixel,
+    rdp_simplify,
+    apply_extrema_constraints,
+)
+from font_forge.watermark import inject_forensic_watermark_in_compiled_glyphs
 
 
 class SheetToFontBuilder:
@@ -288,12 +59,13 @@ class SheetToFontBuilder:
         self.scale_base = config.get("scale_base", 20)
 
     def _upscale_factor(self, width: int) -> int:
+        from font_forge.vision import effective_upscale
         if self.upscale == "auto":
             return effective_upscale(width)
         return int(self.upscale)
 
-    def _load_sheet(self, sheet_name: str) -> tuple[np.ndarray, np.ndarray, float, int]:
-        """Return (thresh, gray_source_shape, pixel_scale, upscale)."""
+    def _load_sheet(self, sheet_name: str) -> tuple[np.ndarray, np.ndarray, tuple[int, ...], float, int, str]:
+        """Return (thresh, gray, gray_source_shape, pixel_scale, upscale, name)."""
         sheet_path = resolve_sheet_path(self.root, sheet_name)
         img = cv2.imread(str(sheet_path))
         if img is None:
@@ -314,33 +86,10 @@ class SheetToFontBuilder:
             self.thresh if self.thresh > 0 else None,
             sharpen=self.pipeline.get("sharpen", True),
         )
-        return thresh, img.shape, pixel_scale, upscale, sheet_path.name
+        return thresh, gray, img.shape, pixel_scale, upscale, sheet_path.name
 
-    def build(self) -> dict[str, Any]:
-        default_sheet = self.config["sheet"]
-        ref_h = self.config["reference_height"]
-
-        thresh_main, shape_main, pixel_scale_main, upscale_main, main_name = (
-            self._load_sheet(default_sheet)
-        )
-        print(
-            f"Main sheet: {main_name} -> {shape_main[1]}x{shape_main[0]} "
-            f"(upscale {upscale_main}x, pixel_scale {pixel_scale_main:.2f})"
-        )
-
-        sheet_cache: dict[str, tuple] = {
-            default_sheet: (thresh_main, shape_main, pixel_scale_main, upscale_main)
-        }
-
+    def _setup_names(self, fb: FontBuilder) -> None:
         font_meta = self.config["font"]
-        validation: dict[str, Any] = {
-            "version": font_meta.get("version", "1.0"),
-            "sheet": main_name,
-            "upscale": upscale_main,
-            "rows": [],
-        }
-
-        fb = FontBuilder(self.units_per_em, isTTF=True)
         fb.setupNameTable(font_meta["names"])
 
         # Add extended name records
@@ -350,8 +99,8 @@ class SheetToFontBuilder:
             name_table.setName("https://github.com/EtherniumSym", 11, plat_id, enc_id, lang_id)
             name_table.setName("Created with Ethernium Font Creator", 13, plat_id, enc_id, lang_id)
 
-        glyphs: dict = {}
-        glyph_order = [".notdef"]
+    def _create_fallback_glyphs(self, glyphs: dict, glyph_order: list, cmap: dict, metrics: dict) -> None:
+        # 1. .notdef
         pen = TTGlyphPen(None)
         for coords in [(100, 100), (900, 100), (900, 900), (100, 900)]:
             if coords == (100, 100):
@@ -360,21 +109,17 @@ class SheetToFontBuilder:
                 pen.lineTo(coords)
         pen.closePath()
         glyphs[".notdef"] = pen.glyph()
+        metrics[".notdef"] = (1000, 100)
 
-        cmap: dict[int, str] = {}
-        metrics: dict[str, tuple[int, int]] = {".notdef": (1000, 100)}
-
-        # Define custom fallback glyphs for missing ASCII characters
-        # 1. space (codepoint 32)
+        # 2. space (codepoint 32)
         pen_sp = TTGlyphPen(None)
         glyphs["space"] = pen_sp.glyph()
         glyph_order.append("space")
         cmap[32] = "space"
         metrics["space"] = (280, 0)
 
-        # 2. dollar (codepoint 36)
+        # 3. dollar (codepoint 36)
         pen_dl = TTGlyphPen(None)
-        # Geometric S shape
         pen_dl.moveTo((100, 700))
         pen_dl.lineTo((400, 700))
         pen_dl.lineTo((400, 420))
@@ -388,7 +133,6 @@ class SheetToFontBuilder:
         pen_dl.lineTo((340, 620))
         pen_dl.lineTo((100, 620))
         pen_dl.closePath()
-        # Vertical stroke
         pen_dl.moveTo((220, 20))
         pen_dl.lineTo((280, 20))
         pen_dl.lineTo((280, 780))
@@ -399,7 +143,7 @@ class SheetToFontBuilder:
         cmap[36] = "dollar"
         metrics["dollar"] = (500, 100)
 
-        # 3. asciicircum (codepoint 94)
+        # 4. asciicircum (codepoint 94)
         pen_ac = TTGlyphPen(None)
         pen_ac.moveTo((100, 450))
         pen_ac.lineTo((160, 450))
@@ -414,7 +158,7 @@ class SheetToFontBuilder:
         cmap[94] = "asciicircum"
         metrics["asciicircum"] = (600, 100)
 
-        # 4. grave (codepoint 96)
+        # 5. grave (codepoint 96)
         pen_gr = TTGlyphPen(None)
         pen_gr.moveTo((100, 580))
         pen_gr.lineTo((220, 720))
@@ -426,7 +170,7 @@ class SheetToFontBuilder:
         cmap[96] = "grave"
         metrics["grave"] = (350, 100)
 
-        # 5. bar (codepoint 124)
+        # 6. bar (codepoint 124)
         pen_br = TTGlyphPen(None)
         pen_br.moveTo((120, -100))
         pen_br.lineTo((180, -100))
@@ -438,20 +182,246 @@ class SheetToFontBuilder:
         cmap[124] = "bar"
         metrics["bar"] = (300, 120)
 
+    def _vectorize_contour(
+        self,
+        contour: np.ndarray,
+        gray_glyph_crop: np.ndarray,
+        eps_base: float,
+        x_min: int,
+        baseline: int,
+        scale: float,
+        y1p: int,
+        cy1: int,
+        cx1: int
+    ) -> list[tuple[int, int]]:
+        refined = refine_contour_subpixel(contour, gray_glyph_crop)
+        peri = cv2.arcLength(refined, True)
+        eps = max(
+            eps_base,
+            self.eps_factor * peri if self.trace_exact else 0.010 * peri,
+        )
+        approx = cv2.approxPolyDP(refined, eps, True)
+        pts = approx.reshape(-1, 2)
+        if len(pts) < 3:
+            return []
+        if self.snap_deg > 0 and not self.trace_exact:
+            pts = snap_contour_points(pts, self.snap_deg)
+        font_pts = []
+        for px, py in pts:
+            abs_x, abs_y = cx1 + px, y1p + cy1 + py
+            font_pts.append(
+                to_font_coord(abs_x, abs_y, x_min, baseline, scale, self.lsb)
+            )
+        if not self.trace_exact:
+            font_pts = rdp_simplify(font_pts, epsilon=1.5)
+            font_pts = apply_extrema_constraints(font_pts, tolerance=8.0)
+            font_pts = simplify_colinear(font_pts)
+        return font_pts
+
+    def _drop_rogue_paths(self, paths: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]:
+        cleaned = []
+        for path in paths:
+            ys = [p[1] for p in path]
+            if min(ys) < -120 or max(ys) > 1080:
+                continue
+            if max(ys) - min(ys) > 980:
+                continue
+            cleaned.append(path)
+        return cleaned
+
+    def _process_glyph_contours(
+        self,
+        char: str,
+        glyph_crop: np.ndarray,
+        gray_glyph_crop: np.ndarray,
+        x_min: int,
+        baseline: int,
+        scale: float,
+        eps_base: float,
+        y1p: int,
+        cy1: int,
+        cx1: int
+    ) -> list[list[tuple[int, int]]]:
+        g_contours, hierarchy = cv2.findContours(
+            glyph_crop, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
+        )
+        path_list: list[list[tuple[int, int]]] = []
+
+        def add_path(contour):
+            fp = self._vectorize_contour(
+                contour, gray_glyph_crop, eps_base, x_min, baseline, scale, y1p, cy1, cx1
+            )
+            if len(fp) >= 3:
+                path_list.append(fp)
+
+        if hierarchy is not None and len(g_contours):
+            hier = hierarchy[0]
+            for ci, c in enumerate(g_contours):
+                if hier[ci][3] != -1:
+                    continue
+                add_path(c)
+                child = hier[ci][2]
+                while child != -1:
+                    add_path(g_contours[child])
+                    child = hier[child][0]
+        else:
+            for c in g_contours:
+                add_path(c)
+
+        path_list = self._drop_rogue_paths(path_list)
+        if not path_list:
+            g_contours, _ = cv2.findContours(
+                glyph_crop, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            path_list = []
+            for c in g_contours:
+                refined = refine_contour_subpixel(c, gray_glyph_crop)
+                peri = cv2.arcLength(refined, True)
+                eps = max(eps_base, self.eps_factor * peri)
+                approx = cv2.approxPolyDP(refined, eps, True)
+                pts = approx.reshape(-1, 2)
+                if len(pts) < 3:
+                    continue
+                fp = [
+                    to_font_coord(
+                        cx1 + p[0], y1p + cy1 + p[1], x_min, baseline, scale, self.lsb
+                    )
+                    for p in pts
+                ]
+                if not self.trace_exact:
+                    fp = rdp_simplify(fp, epsilon=1.5)
+                    fp = apply_extrema_constraints(fp, tolerance=8.0)
+                    fp = simplify_colinear(fp)
+                if len(fp) >= 3:
+                    path_list.append(fp)
+            path_list = self._drop_rogue_paths(path_list)
+
+        return path_list
+
+    def _setup_kerning(self, fb: FontBuilder, cmap: dict[int, str], glyphs: dict) -> None:
+        from fontTools.ttLib.tables._k_e_r_n import table__k_e_r_n, KernTable_format_0
+        kern = table__k_e_r_n()
+        kern.version = 0
+        subtable = KernTable_format_0()
+        subtable.version = 0
+        subtable.coverage = 1
+        
+        kern_table = {}
+        def add_kern_pair(char1, char2, val):
+            g1 = cmap.get(ord(char1))
+            g2 = cmap.get(ord(char2))
+            if g1 and g2 and g1 in glyphs and g2 in glyphs:
+                kern_table[(g1, g2)] = val
+        
+        pairs_to_add = [
+            ('A', 'V', -45), ('V', 'A', -45),
+            ('A', 'W', -40), ('W', 'A', -40),
+            ('A', 'Y', -45), ('Y', 'A', -45),
+            ('A', 'T', -35), ('T', 'A', -45),
+            ('F', 'A', -35), ('P', 'A', -30),
+            ('L', 'T', -40), ('L', 'V', -40),
+            ('L', 'W', -35), ('L', 'Y', -40),
+            ('T', 'O', -35), ('O', 'T', -35),
+            ('T', 'C', -30), ('C', 'T', -30),
+            ('Y', 'O', -30), ('O', 'Y', -30),
+        ]
+        
+        for c1, c2, val in pairs_to_add:
+            add_kern_pair(c1.upper(), c2.upper(), val)
+            add_kern_pair(c1.lower(), c2.lower(), val)
+            add_kern_pair(c1.upper(), c2.lower(), val)
+            add_kern_pair(c1.lower(), c2.upper(), val)
+            
+        # Special symbols kerning (Omega and Delta)
+        add_kern_pair('\u03a9', '\u0394', -25)
+        add_kern_pair('\u0394', '\u03a9', -25)
+        
+        if kern_table:
+            subtable.kernTable = kern_table
+            kern.subtables = [subtable]
+            fb.font['kern'] = kern
+
+    def _setup_render_tables(self, fb: FontBuilder, metrics_header: dict) -> None:
+        fb.setupHorizontalHeader(
+            ascent=metrics_header.get("ascent", 900),
+            descent=metrics_header.get("descent", -224),
+        )
+        fb.setupOS2(
+            sTypoAscender=metrics_header.get("ascent", 900),
+            sTypoDescender=metrics_header.get("descent", -224),
+            sTypoLineGap=0,
+            usWinAscent=metrics_header.get("win_ascent", 1000),
+            usWinDescent=metrics_header.get("win_descent", 250),
+            sxHeight=500,
+            sCapHeight=700,
+            usWeightClass=400,
+            usWidthClass=5,
+            fsType=0,
+            fsSelection=0x0040,  # REGULAR bit
+            achVendID="ETHN",
+        )
+        fb.setupPost()
+        fb.setupMaxp()
+
+        # Add gasp table for optimal screen rendering
+        from fontTools.ttLib.tables._g_a_s_p import table__g_a_s_p
+        gasp = table__g_a_s_p()
+        gasp.version = 1
+        gasp.gaspRange = {
+            8: 0x000A,    # < 8ppem: gridfit only
+            20: 0x0007,   # 8-20ppem: gridfit + grayscale + symmetric smoothing
+            65535: 0x000F, # > 20ppem: all smoothing options
+        }
+        fb.font['gasp'] = gasp
+
+    def build(self) -> dict[str, Any]:
+        default_sheet = self.config["sheet"]
+        ref_h = self.config["reference_height"]
+
+        thresh_main, gray_main, shape_main, pixel_scale_main, upscale_main, main_name = (
+            self._load_sheet(default_sheet)
+        )
+        print(
+            f"Main sheet: {main_name} -> {shape_main[1]}x{shape_main[0]} "
+            f"(upscale {upscale_main}x, pixel_scale {pixel_scale_main:.2f})"
+        )
+
+        sheet_cache: dict[str, tuple] = {
+            default_sheet: (thresh_main, gray_main, shape_main, pixel_scale_main, upscale_main)
+        }
+
+        font_meta = self.config["font"]
+        validation: dict[str, Any] = {
+            "version": font_meta.get("version", "1.0"),
+            "sheet": main_name,
+            "upscale": upscale_main,
+            "rows": [],
+        }
+
+        fb = FontBuilder(self.units_per_em, isTTF=True)
+        self._setup_names(fb)
+
+        glyphs: dict = {}
+        glyph_order = [".notdef"]
+        cmap: dict[int, str] = {}
+        metrics: dict[str, tuple[int, int]] = {}
+
+        self._create_fallback_glyphs(glyphs, glyph_order, cmap, metrics)
+
         for row in self.config["rows"]:
             name = row["name"]
             char_list = row["chars"]
             row_sheet = row.get("sheet", default_sheet)
 
             if row_sheet not in sheet_cache:
-                t, sh, ps, up, _ = self._load_sheet(row_sheet)
-                sheet_cache[row_sheet] = (t, sh, ps, up)
+                t, g, sh, ps, up, _ = self._load_sheet(row_sheet)
+                sheet_cache[row_sheet] = (t, g, sh, ps, up)
                 print(
                     f"Alt sheet: {row_sheet} -> {sh[1]}x{sh[0]} "
                     f"(pixel_scale {ps:.2f})"
                 )
 
-            thresh, shape, pixel_scale, upscale = sheet_cache[row_sheet]
+            thresh, gray, shape, pixel_scale, upscale = sheet_cache[row_sheet]
             rows_scaled = scale_rows([row], shape[0], ref_h)[0]
             y1 = rows_scaled["y_start"]
             y2 = rows_scaled["y_end"]
@@ -530,6 +500,7 @@ class SheetToFontBuilder:
                 cx2 = min(crop.shape[1], gx + gw + margin)
                 cy2 = min(crop.shape[0], gy + gh + margin)
                 glyph_crop = crop[cy1:cy2, cx1:cx2].copy()
+                gray_glyph_crop = gray[y1p + cy1 : y1p + cy2, cx1:cx2].copy()
                 if not self.skip_refine and not self.trace_exact:
                     glyph_crop = refine_glyph_bitmap(glyph_crop)
                 elif self.trace_exact:
@@ -540,85 +511,10 @@ class SheetToFontBuilder:
                         glyph_crop, self.symmetry_blend
                     )
 
-                g_contours, hierarchy = cv2.findContours(
-                    glyph_crop, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
+                path_list = self._process_glyph_contours(
+                    char, glyph_crop, gray_glyph_crop, gx, baseline, scale, eps_base, y1p, cy1, cx1
                 )
 
-                x_min = gx
-                path_list: list[list[tuple[int, int]]] = []
-
-                def add_path(contour):
-                    peri = cv2.arcLength(contour, True)
-                    eps = max(
-                        eps_base,
-                        self.eps_factor * peri if self.trace_exact else 0.010 * peri,
-                    )
-                    approx = cv2.approxPolyDP(contour, eps, True)
-                    pts = approx.reshape(-1, 2)
-                    if len(pts) < 3:
-                        return
-                    if self.snap_deg > 0 and not self.trace_exact:
-                        pts = snap_contour_points(pts, self.snap_deg)
-                    font_pts = []
-                    for px, py in pts:
-                        abs_x, abs_y = cx1 + px, y1p + cy1 + py
-                        font_pts.append(
-                            to_font_coord(abs_x, abs_y, x_min, baseline, scale, self.lsb)
-                        )
-                    if not self.trace_exact:
-                        font_pts = simplify_colinear(font_pts)
-                    if len(font_pts) >= 3:
-                        path_list.append(font_pts)
-
-                if hierarchy is not None and len(g_contours):
-                    hier = hierarchy[0]
-                    for ci, c in enumerate(g_contours):
-                        if hier[ci][3] != -1:
-                            continue
-                        add_path(c)
-                        child = hier[ci][2]
-                        while child != -1:
-                            add_path(g_contours[child])
-                            child = hier[child][0]
-                else:
-                    for c in g_contours:
-                        add_path(c)
-
-                if not path_list:
-                    continue
-
-                def drop_rogue_paths(paths):
-                    cleaned = []
-                    for path in paths:
-                        ys = [p[1] for p in path]
-                        if min(ys) < -120 or max(ys) > 1080:
-                            continue
-                        if max(ys) - min(ys) > 980:
-                            continue
-                        cleaned.append(path)
-                    return cleaned
-
-                path_list = drop_rogue_paths(path_list)
-                if not path_list:
-                    g_contours, _ = cv2.findContours(
-                        glyph_crop, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-                    )
-                    path_list = []
-                    for c in g_contours:
-                        peri = cv2.arcLength(c, True)
-                        eps = max(eps_base, self.eps_factor * peri)
-                        approx = cv2.approxPolyDP(c, eps, True)
-                        pts = approx.reshape(-1, 2)
-                        if len(pts) < 3:
-                            continue
-                        fp = [
-                            to_font_coord(
-                                cx1 + p[0], y1p + cy1 + p[1], x_min, baseline, scale, self.lsb
-                            )
-                            for p in pts
-                        ]
-                        path_list.append(fp)
-                    path_list = drop_rogue_paths(path_list)
                 if not path_list:
                     print(f"  Skip '{char}': no valid paths")
                     continue
@@ -632,17 +528,26 @@ class SheetToFontBuilder:
                     print(f"  Skip '{char}': too wide")
                     continue
 
+                # Auto baseline alignment vertical shift
+                is_baseline_char = char.isupper() or char in "acenorsuvwxz"
+                shift_y = 0
+                if is_baseline_char and self.pipeline.get("auto_baseline_align", True):
+                    shift_y = -min_fy
+
                 shift_x = self.lsb - min_fx
                 pen = TTGlyphPen(None)
+                max_deflection = self.pipeline.get("curve_deflection_threshold", 28.0)
                 for path in path_list:
-                    shifted = [(p[0] + shift_x, p[1]) for p in path]
-                    pen.moveTo(shifted[0])
-                    for pt in shifted[1:]:
-                        pen.lineTo(pt)
-                    pen.closePath()
+                    shifted = [(p[0] + shift_x, p[1] + shift_y) for p in path]
+                    if max_deflection > 0 and not self.trace_exact:
+                        draw_smooth_path(pen, shifted, max_deflection)
+                    else:
+                        pen.moveTo(shifted[0])
+                        for pt in shifted[1:]:
+                            pen.lineTo(pt)
+                        pen.closePath()
 
                 glyph_w = max_fx - min_fx
-                # Tight ink-based advance: LSB + ink width + RSB
                 rsb = self.config.get("rsb_offset", 40)
                 advance = int(glyph_w) + self.lsb + rsb
 
@@ -655,89 +560,17 @@ class SheetToFontBuilder:
 
                 metrics[gname] = (advance, self.lsb)
 
+        # Embed the steganographic watermark!
+        watermark_str = self.config.get("watermark", "SteveBlackbeard / FONTS-CREATOR-by-Ethernium")
+        inject_forensic_watermark_in_compiled_glyphs(glyphs, cmap, watermark_str)
+
         fb.setupGlyphOrder(glyph_order)
         fb.setupGlyf(glyphs)
         fb.setupCharacterMap(cmap)
         fb.setupHorizontalMetrics(metrics)
 
-        # Setup professional kerning table (legacy format 0 kern table)
-        from fontTools.ttLib.tables._k_e_r_n import table__k_e_r_n, KernTable_format_0
-        kern = table__k_e_r_n()
-        kern.version = 0
-        subtable = KernTable_format_0()
-        subtable.version = 0
-        subtable.coverage = 1
-        
-        kern_table = {}
-        def add_kern_pair(char1, char2, val):
-            g1 = cmap.get(ord(char1))
-            g2 = cmap.get(ord(char2))
-            if g1 and g2 and g1 in glyphs and g2 in glyphs:
-                kern_table[(g1, g2)] = val
-        
-        pairs_to_add = [
-            ('A', 'V', -45), ('V', 'A', -45),
-            ('A', 'W', -40), ('W', 'A', -40),
-            ('A', 'Y', -45), ('Y', 'A', -45),
-            ('A', 'T', -35), ('T', 'A', -45),
-            ('F', 'A', -35), ('P', 'A', -30),
-            ('L', 'T', -40), ('L', 'V', -40),
-            ('L', 'W', -35), ('L', 'Y', -40),
-            ('T', 'O', -35), ('O', 'T', -35),
-            ('T', 'C', -30), ('C', 'T', -30),
-            ('Y', 'O', -30), ('O', 'Y', -30),
-        ]
-        
-        for c1, c2, val in pairs_to_add:
-            # Uppercase pairs
-            add_kern_pair(c1.upper(), c2.upper(), val)
-            # Lowercase pairs
-            add_kern_pair(c1.lower(), c2.lower(), val)
-            # Mixed pairs
-            add_kern_pair(c1.upper(), c2.lower(), val)
-            add_kern_pair(c1.lower(), c2.upper(), val)
-            
-        # Special symbols kerning (Omega and Delta)
-        add_kern_pair('\u03a9', '\u0394', -25)
-        add_kern_pair('\u0394', '\u03a9', -25)
-        
-        if kern_table:
-            subtable.kernTable = kern_table
-            kern.subtables = [subtable]
-            fb.font['kern'] = kern
-
-        metrics_header = self.config.get("metrics", {})
-        fb.setupHorizontalHeader(
-            ascent=metrics_header.get("ascent", 900),
-            descent=metrics_header.get("descent", -224),
-        )
-        fb.setupOS2(
-            sTypoAscender=metrics_header.get("ascent", 900),
-            sTypoDescender=metrics_header.get("descent", -224),
-            sTypoLineGap=0,
-            usWinAscent=metrics_header.get("win_ascent", 1000),
-            usWinDescent=metrics_header.get("win_descent", 250),
-            sxHeight=500,
-            sCapHeight=700,
-            usWeightClass=400,
-            usWidthClass=5,
-            fsType=0,
-            fsSelection=0x0040,  # REGULAR bit
-            achVendID="ETHN",
-        )
-        fb.setupPost()
-        fb.setupMaxp()
-
-        # Add gasp table for optimal screen rendering
-        from fontTools.ttLib.tables._g_a_s_p import table__g_a_s_p
-        gasp = table__g_a_s_p()
-        gasp.version = 1
-        gasp.gaspRange = {
-            8: 0x000A,    # < 8ppem: gridfit only
-            20: 0x0007,   # 8-20ppem: gridfit + grayscale + symmetric smoothing
-            65535: 0x000F, # > 20ppem: all smoothing options
-        }
-        fb.font['gasp'] = gasp
+        self._setup_kerning(fb, cmap, glyphs)
+        self._setup_render_tables(fb, self.config.get("metrics", {}))
 
         out_base = self.root / self.config.get("output_basename", "Output")
         ttf_path = out_base.with_suffix(".ttf")
