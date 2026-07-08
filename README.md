@@ -39,15 +39,25 @@ python -m font_forge configs/ethernium.json
 3. Pon `mi_glyph_sheet.png` en la carpeta.
 4. `python -m font_forge configs/mi_fuente.json`
 
-## Pipeline v2.2 (trazo de calidad)
+## Pipeline v4.0 (Trazado Determinista de Precisión)
 
 | Paso | Qué hace |
 |------|----------|
 | Upscale auto | 1× si la hoja ya es grande; 2×/4× si es pequeña |
-| Otsu + mediana | Bordes más nítidos que blur + umbral fijo |
-| Snap 45° | Ángulos geométricos más rectos (como la referencia) |
-| Simetría 90 % | M, O, Ω… sin deformar el dibujo |
-| CCOMP | Huecos en O, 0, 8, @… |
+| Detección Sub-píxel | Muestreo bilineal en escala de grises para encontrar cruces exactos de umbral sin dientes de sierra. |
+| Simplificación RDP | Algoritmo Ramer-Douglas-Peucker global a escala UPM para limpiar nodos redundantes. |
+| Tangentes Extrema | Alineación forzada horizontal/vertical en los extremos cardinales (min/max X/Y) para curvas Bézier perfectas. |
+| Snap Geométrico | Ángulos ajustables a 45°/90° para glifos rúnicos nítidos. |
+| Simetría Ethernium | Espejado inteligente de contornos para glifos simétricos (M, O, Ω, etc.). |
+| Marcas de Agua | Inyección esteganográfica de firma forense de autoría en el LSB de las coordenadas. |
+
+## Arquitectura Modular (`font_forge/`)
+
+El compilador ha sido refactorizado físicamente para aislar responsabilidades:
+*   [**vision.py**](file:///E:/font%20forge%20by%20ethernium%202/font_forge/vision.py): Procesamiento de imagen y OpenCV (binarización, cuadrículas, filtros, morfología).
+*   [**vector.py**](file:///E:/font%20forge%20by%20ethernium%202/font_forge/vector.py): Geometría Bézier, interpolación sub-píxel, simplificación RDP y restricciones de tangencia.
+*   [**watermark.py**](file:///E:/font%20forge%20by%20ethernium%202/font_forge/watermark.py): Sistema de marcas de agua forenses legibles y deterministas.
+*   [**core.py**](file:///E:/font%20forge%20by%20ethernium%202/font_forge/core.py): Orquestador minimalista y constructor de tablas OpenType (`gasp`, `kern`, `OS/2`).
 
 ## Herramientas (`tools/`)
 
@@ -56,17 +66,9 @@ python -m font_forge configs/ethernium.json
 | `python tools/debug_rows.py` | Genera `tools/sheet_rows_debug.png` con las cajas de cada fila |
 | `python tools/calibrate_sheet.py` | Detecta bandas Y y sugiere coordenadas para un JSON nuevo |
 | `python tools/export_atlas.py` | Atlas visual `tools/glyph_atlas.png` desde el TTF |
-| `python tools/setup_hq_sheet.py imagen.png` | Instala hoja HQ como `ethernium_sheet_hq.png` |
+| `python tools/forensic_analyzer.py` | Audita la inyección esteganográfica forense y extrae la firma del TTF |
 | `build.bat` | Instala deps, build, debug y atlas en un clic |
-
-**Hoja HQ:** coloca `ethernium_sheet_hq.png` en la raíz (prioridad sobre `ethernium_sheet.png`). No uses `Ethernium_Sym.otf` antiguo; solo TTF/WOFF2 del build actual.
 
 ## Vista previa
 
-Abre `preview_font.html` en el navegador. Muestra estado del build leyendo `build_report.json`.
-
-## Límites actuales
-
-- La hoja debe ser **grid por filas** (no tipografía variable ni kerning manual).
-- Kerning, pesos (Bold) y hinting requieren edición en Glyphs/FontForge o ampliar el motor.
-- Para calzar **exactamente** una referencia visual, ajusta `reference_height` y las Y de cada fila en el JSON.
+Abre `preview_font.html` en el navegador. Muestra el estado del build leyendo `build_report.json`.

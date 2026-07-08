@@ -6,9 +6,13 @@ Puedes reutilizar este sistema para construir cualquier nueva tipografía a part
 
 ---
 
-## 📂 Estructura del Creador
+## 📂 Estructura del Creador Modular
 
-- **`font_forge/`**: Código principal del compilador (binarización, anti-aliasing, trazado vectorial y compilación de tablas OpenType).
+- **`font_forge/`**:
+  - `vision.py`: Operaciones de imagen con OpenCV, binarización y rejillas.
+  - `vector.py`: Interpolación sub-píxel, simplificación RDP y extrema constraints.
+  - `watermark.py`: Inyector de marca de agua esteganográfica.
+  - `core.py`: Orquestador principal y constructor de tablas OpenType (`gasp`, `kern`, `OS/2`).
 - **`configs/`**:
   - `template.json`: Plantilla de configuración limpia para nuevos proyectos.
   - `ethernium.json`: Configuración actual y calibración de Ethernium Sym.
@@ -62,3 +66,4 @@ Puedes ajustar la vectorización y nitidez editando la sección `"pipeline"` de 
 - **Calibrar bandas Y:** `python tools/calibrate_sheet.py <tu_imagen.png>`
 - **Visualizar límites de filas:** `python tools/debug_rows.py` (crea un mapa visual para validar que las coordenadas Y del JSON no corten las letras).
 - **Auditoría de fuente:** `python tools/audit_font.py` (informa del total de glifos, métricas y advierte si algún caracter se está recortando).
+- **Auditoría esteganográfica:** `python tools/forensic_analyzer.py` (extrae y audita la marca de agua esteganográfica).
