@@ -172,7 +172,7 @@ This suite is open source and available under the [MIT License](LICENSE.txt).
 
     # 7. Add remote origin and push --force!
     print("[*] Adding remote origin...")
-    remote_url = "https://github.com/SteveBlackbeard/FONTS-CREATOR-by-Ethernium.git"
+    remote_url = "https://github.com/SteveBlackbeard/FONTS-FORGE-by-Ethernium.git"
     run_cmd(f"git remote add origin {remote_url}", temp_dir)
 
     print("[*] Staging pristine files...")
