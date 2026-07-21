@@ -18,6 +18,30 @@
       "psName": "EtherniumSym-Regular"
     }
   },
+  "identity": {
+    "description": "Ethernium Sym — A cyberpunk-runic display typeface.",
+    "vendor_url": "https://github.com/EtherniumSym",
+    "license_description": "Created with Ethernium Font Creator",
+    "vendor_id": "ETHN"
+  },
+  "watermark": "SteveBlackbeard / FONTS-CREATOR-by-Ethernium",
+  "fallback_glyphs": ["dollar", "asciicircum", "grave", "bar"],
+  "kerning": {
+    "auto_case_expand": true,
+    "pairs": [
+      ["A", "V", -45], ["V", "A", -45],
+      ["A", "W", -40], ["W", "A", -40],
+      ["A", "Y", -45], ["Y", "A", -45],
+      ["A", "T", -35], ["T", "A", -45],
+      ["F", "A", -35], ["P", "A", -30],
+      ["L", "T", -40], ["L", "V", -40],
+      ["L", "W", -35], ["L", "Y", -40],
+      ["T", "O", -35], ["O", "T", -35],
+      ["T", "C", -30], ["C", "T", -30],
+      ["Y", "O", -30], ["O", "Y", -30],
+      ["Ω", "Δ", -25], ["Δ", "Ω", -25]
+    ]
+  },
   "pipeline": {
     "upscale": "auto",
     "threshold": 30,

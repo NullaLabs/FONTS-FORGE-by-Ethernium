@@ -2,12 +2,17 @@ import cv2
 import numpy as np
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 
-def to_font_coord(abs_x, abs_y, x_min, baseline_y, scale, lsb):
-    """Map sheet pixels to font UPM; clamp to valid glyf range."""
+def to_font_coord(abs_x, abs_y, x_min, baseline_y, scale, lsb, upm=1024):
+    """
+    Map sheet pixels to font units; clamp to a sane glyf range.
+
+    Bounds scale with the em so that a non-1024 UPM does not silently
+    deform outlines against limits meant for a different size.
+    """
     fx = int((abs_x - x_min) * scale + lsb)
     fy = int((baseline_y - abs_y) * scale)
-    fx = max(-500, min(1200, fx))
-    fy = max(-600, min(1100, fy))
+    fx = max(int(-0.5 * upm), min(int(1.5 * upm), fx))
+    fy = max(int(-0.6 * upm), min(int(1.2 * upm), fy))
     return fx, fy
 
 
