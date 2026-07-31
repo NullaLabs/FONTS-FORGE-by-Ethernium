@@ -1,0 +1,43 @@
+{
+  "version": "2.5",
+  "sheet": "ethernium_sheet_hq.png",
+  "upscale": 1,
+  "rows": [
+    {
+      "row": "Uppercase",
+      "expected": 26,
+      "extracted": 26,
+      "ok": true
+    },
+    {
+      "row": "Lowercase",
+      "expected": 26,
+      "extracted": 26,
+      "ok": true
+    },
+    {
+      "row": "Numbers",
+      "expected": 10,
+      "extracted": 10,
+      "ok": true
+    },
+    {
+      "row": "Basic Punc",
+      "expected": 12,
+      "extracted": 12,
+      "ok": true
+    },
+    {
+      "row": "Extended Punc",
+      "expected": 16,
+      "extracted": 16,
+      "ok": true
+    },
+    {
+      "row": "Special Symbols",
+      "expected": 10,
+      "extracted": 10,
+      "ok": true
+    }
+  ]
+}

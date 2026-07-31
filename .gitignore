@@ -124,3 +124,13 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 Desktop.ini
+
+# Font Forge Studio session output (sheets, configs and fonts you build)
+studio_out/
+
+# Chronolith memory core: the DNA record is versioned, its caches are not.
+**/.chronolith/keys/*.priv
+**/.chronolith/keys/*.enc
+**/.chronolith/hash_cache.json
+**/.chronolith/pro_report.json
+**/.chronolith/logs/

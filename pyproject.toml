@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "font-forge-by-ethernium"
+version = "4.0.0"
+description = "Raster specimen sheet to OpenType font pipeline, with automatic layout detection and a local drag-and-drop studio."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "SteveBlackbeard" }]
+keywords = ["font", "opentype", "truetype", "typography", "vectorization", "fonttools"]
+# No license classifier: PEP 639 supersedes it with the SPDX expression above.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Text Processing :: Fonts",
+]
+dependencies = [
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0",
+    "fonttools>=4.43.0",
+    "Pillow>=10.0.0",
+    "brotli>=1.1.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+font-forge = "font_forge.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/SteveBlackbeard/FONTS-FORGE-by-Ethernium"
+Repository = "https://github.com/SteveBlackbeard/FONTS-FORGE-by-Ethernium"
+
+[tool.setuptools]
+packages = ["font_forge"]
+
+[tool.setuptools.package-data]
+font_forge = ["studio.html"]

@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Font Forge Studio</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #12151d;
+    --panel-2: #171b25;
+    --line: #262c3a;
+    --text: #e6e9f0;
+    --muted: #8b93a7;
+    --accent: #5ee0c0;
+    --accent-dim: #2a7f6d;
+    --warn: #f0b45e;
+    --bad: #f0705e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 14px;
+  }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: .14em; text-transform: uppercase; }
+  header span { color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: minmax(0,1fr) 400px; gap: 20px; padding: 20px 24px 60px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .card + .card { margin-top: 16px; }
+  .card h2 {
+    margin: 0 0 12px; font-size: 11px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600;
+  }
+
+  #drop {
+    border: 2px dashed var(--line); border-radius: 10px; padding: 56px 20px;
+    text-align: center; color: var(--muted); cursor: pointer; transition: .15s;
+  }
+  #drop.hot { border-color: var(--accent); color: var(--accent); background: #101a19; }
+  #drop strong { display: block; color: var(--text); font-size: 15px; margin-bottom: 6px; }
+
+  #stage { position: relative; overflow: auto; max-height: 62vh; border-radius: 8px; background: #05070a; }
+  /* Fit wide sheets to the panel; pointer maths converts through the bounding
+     rect, so dragging the baseline stays accurate at any display scale. */
+  #stage canvas { display: block; cursor: ns-resize; max-width: 100%; height: auto; }
+
+  label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; letter-spacing: .05em; }
+  input, textarea, select {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--text); border-radius: 6px; padding: 7px 9px; font-size: 13px;
+    font-family: inherit;
+  }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent-dim); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .field + .field, .grid2 + .field, .field + .grid2 { margin-top: 10px; }
+
+  button {
+    background: var(--accent); color: #05201b; border: 0; border-radius: 7px;
+    padding: 10px 16px; font-size: 13px; font-weight: 650; cursor: pointer;
+    font-family: inherit;
+  }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+
+  .row-item { border: 1px solid var(--line); border-radius: 8px; padding: 11px; margin-bottom: 10px; background: var(--panel-2); }
+  .row-item.active { border-color: var(--accent-dim); }
+  .row-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .row-head b { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .tally { font-size: 11px; font-variant-numeric: tabular-nums; padding: 2px 7px; border-radius: 20px; background: #222735; color: var(--muted); }
+  .tally.ok { background: #12332c; color: var(--accent); }
+  .tally.warn { background: #33291a; color: var(--warn); }
+  .row-item input[type=text] { font-family: ui-monospace, "Cascadia Code", monospace; letter-spacing: .04em; }
+  .nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+  .nums input { padding: 4px 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .nums label { font-size: 10px; }
+
+  #status { font-size: 12px; color: var(--muted); min-height: 18px; margin-top: 10px; }
+  #status.bad { color: var(--bad); }
+  #status.good { color: var(--accent); }
+
+  #preview { display: none; }
+  #sample {
+    font-family: "FF_Preview", serif; font-size: 46px; line-height: 1.35;
+    background: #05070a; border-radius: 8px; padding: 18px; word-break: break-word;
+    border: 1px solid var(--line); min-height: 90px;
+  }
+  #sampleText { margin-top: 10px; font-family: ui-monospace, monospace; font-size: 12px; }
+  .dl { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .dl a {
+    text-decoration: none; color: var(--text); border: 1px solid var(--line);
+    padding: 7px 12px; border-radius: 6px; font-size: 12px;
+  }
+  .dl a:hover { border-color: var(--accent-dim); color: var(--accent); }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Font Forge Studio</h1>
+  <span>drop an alphabet &rarr; get a typeface</span>
+</header>
+
+<main>
+  <section>
+    <div class="card" id="dropCard">
+      <div id="drop">
+        <strong>Drop a sheet image here</strong>
+        any alphabet, symbol set or specimen &middot; PNG, JPG, WEBP, BMP
+      </div>
+    </div>
+
+    <div class="card" id="stageCard" style="display:none">
+      <h2>Detected layout</h2>
+      <div id="stage"><canvas id="canvas"></canvas></div>
+      <div class="hint">
+        Cyan line = baseline, drag it to correct. Dashed = row band. Boxes = detected glyphs.
+      </div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="card" id="rowsCard" style="display:none">
+      <h2>Rows</h2>
+      <div id="rows"></div>
+      <div class="hint">Type what each row spells, in order. Leave a row empty to skip it.</div>
+    </div>
+
+    <div class="card" id="metaCard" style="display:none">
+      <h2>Font</h2>
+      <div class="field"><label>Family name</label><input id="family" value="My Font"></div>
+      <div class="grid2">
+        <div class="field"><label>Style</label><input id="style" value="Regular"></div>
+        <div class="field"><label>Version</label><input id="version" value="1.0"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Units per em</label><input id="upm" type="number" value="1024"></div>
+        <div class="field"><label>Side bearing</label><input id="lsb" type="number" value="80"></div>
+      </div>
+      <div class="field"><label>Copyright</label><input id="copyright" placeholder="Your name"></div>
+      <div style="margin-top:14px"><button id="buildBtn">Build font</button></div>
+      <div id="status"></div>
+    </div>
+
+    <div class="card" id="preview">
+      <h2>Preview</h2>
+      <div id="sample">ABCDEFG abcdefg 0123456789</div>
+      <input id="sampleText" value="ABCDEFG abcdefg 0123456789">
+      <div class="dl" id="downloads"></div>
+      <div class="hint" id="buildInfo"></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const canvas = $('canvas'), ctx = canvas.getContext('2d');
+
+let analysis = null;      // last analysis from the server
+let sheetImage = null;    // prepared sheet bitmap
+let activeRow = -1;       // row highlighted in the canvas
+let dragging = null;      // { index } while a baseline is being dragged
+let refineTimer = null;
+
+// ---------- upload ----------
+
+const drop = $('drop');
+drop.addEventListener('click', () => {
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'image/*';
+  picker.onchange = () => picker.files[0] && upload(picker.files[0]);
+  picker.click();
+});
+['dragenter', 'dragover'].forEach(e =>
+  drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('hot'); }));
+['dragleave', 'drop'].forEach(e =>
+  drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('hot'); }));
+drop.addEventListener('drop', ev => {
+  const file = ev.dataTransfer.files[0];
+  if (file) upload(file);
+});
+
+async function upload(file) {
+  setStatus('Analysing sheet…');
+  drop.innerHTML = '<strong>' + file.name + '</strong>analysing…';
+  try {
+    const res = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'X-Filename': file.name },
+      body: await file.arrayBuffer(),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    analysis = data.analysis;
+    await loadSheet();
+    renderRows(data.suggested || []);
+    $('stageCard').style.display = '';
+    $('rowsCard').style.display = '';
+    $('metaCard').style.display = '';
+    if (!$('family').value || $('family').value === 'My Font') {
+      $('family').value = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
+    }
+    setStatus(analysis.rows.length + ' rows detected'
+      + (analysis.inverted ? ' · polarity inverted' : '')
+      + (analysis.deskew_angle ? ' · deskewed ' + analysis.deskew_angle + '°' : ''), 'good');
+    drop.innerHTML = '<strong>' + file.name + '</strong>drop another to start over';
+    refine();
+  } catch (err) {
+    setStatus(err.message, 'bad');
+    drop.innerHTML = '<strong>Drop a sheet image here</strong>' + err.message;
+  }
+}
+
+function loadSheet() {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => { sheetImage = img; draw(); resolve(); };
+    img.onerror = () => reject(new Error('Could not load prepared sheet'));
+    img.src = '/api/sheet.png?t=' + Date.now();
+  });
+}
+
+// ---------- canvas ----------
+
+function draw() {
+  if (!sheetImage || !analysis) return;
+  canvas.width = sheetImage.width;
+  canvas.height = sheetImage.height;
+  ctx.drawImage(sheetImage, 0, 0);
+
+  // Scale annotation weights to the sheet so they stay legible at any size.
+  const unit = Math.max(1, canvas.width / 900);
+
+  analysis.rows.forEach((row, i) => {
+    const on = i === activeRow;
+
+    ctx.fillStyle = on ? 'rgba(94,224,192,.10)' : 'rgba(94,224,192,.035)';
+    ctx.fillRect(0, row.y_start, canvas.width, row.y_end - row.y_start);
+
+    ctx.setLineDash([6 * unit, 5 * unit]);
+    ctx.lineWidth = unit;
+    ctx.strokeStyle = on ? 'rgba(94,224,192,.55)' : 'rgba(139,147,167,.35)';
+    line(0, row.y_start, canvas.width, row.y_start);
+    line(0, row.y_end, canvas.width, row.y_end);
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = on ? 'rgba(240,180,94,.9)' : 'rgba(240,180,94,.35)';
+    ctx.lineWidth = unit;
+    (row.boxes || []).forEach(b => ctx.strokeRect(b.x, b.y, b.w, b.h));
+
+    ctx.strokeStyle = on ? '#5ee0c0' : 'rgba(94,224,192,.6)';
+    ctx.lineWidth = (on ? 2.4 : 1.4) * unit;
+    line(0, row.baseline, canvas.width, row.baseline);
+
+    ctx.fillStyle = on ? '#5ee0c0' : 'rgba(139,147,167,.8)';
+    ctx.font = (13 * unit) + 'px ui-monospace, monospace';
+    ctx.fillText('row ' + (i + 1) + ' · ' + (row.boxes || []).length,
+                 6 * unit, row.y_start + 15 * unit);
+  });
+}
+
+function line(x1, y1, x2, y2) {
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+
+function canvasY(ev) {
+  const rect = canvas.getBoundingClientRect();
+  return Math.round((ev.clientY - rect.top) * (canvas.height / rect.height));
+}
+
+canvas.addEventListener('pointerdown', ev => {
+  if (!analysis) return;
+  const y = canvasY(ev);
+  const tolerance = Math.max(6, canvas.height * 0.012);
+  let best = -1, bestDist = Infinity;
+  analysis.rows.forEach((row, i) => {
+    const dist = Math.abs(row.baseline - y);
+    if (dist < bestDist) { bestDist = dist; best = i; }
+  });
+  if (best < 0) return;
+  activeRow = best;
+  if (bestDist <= tolerance) {
+    dragging = { index: best };
+    canvas.setPointerCapture(ev.pointerId);
+  }
+  draw();
+  syncRowInputs();
+});
+
+canvas.addEventListener('pointermove', ev => {
+  if (!dragging) return;
+  const row = analysis.rows[dragging.index];
+  row.baseline = Math.max(0, Math.min(canvas.height, canvasY(ev)));
+  draw();
+  syncRowInputs();
+});
+
+canvas.addEventListener('pointerup', () => { dragging = null; });
+
+// ---------- rows panel ----------
+
+function renderRows(suggested) {
+  const host = $('rows');
+  host.innerHTML = '';
+  analysis.rows.forEach((row, i) => {
+    const item = document.createElement('div');
+    item.className = 'row-item';
+    item.dataset.index = i;
+    item.innerHTML = `
+      <div class="row-head">
+        <b>Row ${i + 1}</b>
+        <span class="tally" data-tally="${i}">0 / ${row.boxes.length}</span>
+      </div>
+      <input type="text" data-chars="${i}" placeholder="e.g. ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+             value="${escapeAttr(suggested[i] || '')}">
+      <div class="nums">
+        <div><label>top</label><input type="number" data-field="y_start" data-row="${i}" value="${row.y_start}"></div>
+        <div><label>baseline</label><input type="number" data-field="baseline" data-row="${i}" value="${row.baseline}"></div>
+        <div><label>bottom</label><input type="number" data-field="y_end" data-row="${i}" value="${row.y_end}"></div>
+      </div>`;
+    item.addEventListener('pointerenter', () => { activeRow = i; draw(); });
+    host.appendChild(item);
+  });
+
+  host.querySelectorAll('[data-chars]').forEach(input => {
+    input.addEventListener('input', () => { updateTallies(); scheduleRefine(); });
+  });
+  host.querySelectorAll('[data-field]').forEach(input => {
+    input.addEventListener('input', () => {
+      const row = analysis.rows[+input.dataset.row];
+      const value = parseInt(input.value, 10);
+      if (!Number.isNaN(value)) { row[input.dataset.field] = value; draw(); }
+    });
+  });
+  updateTallies();
+}
+
+function syncRowInputs() {
+  analysis.rows.forEach((row, i) => {
+    ['y_start', 'y_end', 'baseline'].forEach(field => {
+      const input = document.querySelector(`[data-field="${field}"][data-row="${i}"]`);
+      if (input && document.activeElement !== input) input.value = row[field];
+    });
+    const item = document.querySelector(`.row-item[data-index="${i}"]`);
+    if (item) item.classList.toggle('active', i === activeRow);
+  });
+}
+
+function charsFor(i) {
+  const input = document.querySelector(`[data-chars="${i}"]`);
+  return input ? [...input.value.trim()] : [];
+}
+
+function updateTallies() {
+  analysis.rows.forEach((row, i) => {
+    const typed = charsFor(i).length;
+    const found = row.boxes.length;
+    const tally = document.querySelector(`[data-tally="${i}"]`);
+    if (!tally) return;
+    tally.textContent = typed + ' / ' + found;
+    tally.className = 'tally' + (typed === 0 ? '' : typed === found ? ' ok' : ' warn');
+  });
+}
+
+// Re-cut the sheet using the character counts as ground truth.
+function scheduleRefine() {
+  clearTimeout(refineTimer);
+  refineTimer = setTimeout(refine, 400);
+}
+
+async function refine() {
+  if (!analysis) return;
+  const counts = analysis.rows.map((_, i) => charsFor(i).length);
+  if (!counts.some(c => c > 0)) return;
+
+  // Keep any baseline the user has dragged; refinement only re-cuts glyphs.
+  const edited = analysis.rows.map(r => ({ y_start: r.y_start, y_end: r.y_end, baseline: r.baseline }));
+  const res = await fetch('/api/refine', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ counts }),
+  });
+  const data = await res.json();
+  if (data.error) return setStatus(data.error, 'bad');
+
+  analysis = data.analysis;
+  analysis.rows.forEach((row, i) => {
+    if (counts[i] > 0) return;      // untouched rows keep server values
+    Object.assign(row, edited[i]);  // rows the user adjusted keep their edits
+  });
+  draw();
+  updateTallies();
+  syncRowInputs();
+}
+
+// ---------- build ----------
+
+$('buildBtn').addEventListener('click', async () => {
+  const btn = $('buildBtn');
+  btn.disabled = true;
+  setStatus('Building…');
+  try {
+    const rows = analysis.rows.map((row, i) => ({
+      index: row.index,
+      chars: charsFor(i).join(''),
+      y_start: row.y_start, y_end: row.y_end, baseline: row.baseline,
+    }));
+    const meta = {
+      family_name: $('family').value.trim() || 'My Font',
+      style_name: $('style').value.trim() || 'Regular',
+      version: $('version').value.trim() || '1.0',
+      units_per_em: parseInt($('upm').value, 10) || 1024,
+      lsb_offset: parseInt($('lsb').value, 10) || 80,
+      copyright: $('copyright').value.trim() || undefined,
+    };
+    const res = await fetch('/api/build', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows, meta }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    showPreview(data);
+  } catch (err) {
+    setStatus(err.message, 'bad');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function showPreview(data) {
+  const face = new FontFace('FF_Preview', base64ToBuffer(data.preview), { format: 'woff2' });
+  face.load().then(loaded => {
+    document.fonts.add(loaded);
+    $('preview').style.display = '';
+    $('sample').style.fontFamily = '"FF_Preview", serif';
+  });
+
+  const kinds = ['ttf', 'woff', 'woff2', 'json'];
+  $('downloads').innerHTML = kinds.map(ext => {
+    const name = ext === 'json' ? 'config.json' : data.basename + '.' + ext;
+    return `<a href="/api/download/${name}" download>${name}</a>`;
+  }).join('');
+
+  const failed = (data.report.rows || []).filter(r => !r.ok);
+  $('buildInfo').textContent = 'Saved to ' + data.workspace;
+  if (failed.length) {
+    setStatus(failed.length + ' row(s) did not match the expected glyph count — check the counts above', 'warn');
+  } else {
+    setStatus('Built ' + data.basename + ' · all rows matched', 'good');
+  }
+}
+
+$('sampleText').addEventListener('input', ev => {
+  $('sample').textContent = ev.target.value || ' ';
+});
+
+// ---------- helpers ----------
+
+function base64ToBuffer(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function escapeAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function setStatus(msg, kind) {
+  const el = $('status');
+  el.textContent = msg || '';
+  el.className = kind || '';
+}
+</script>
+</body>
+</html>

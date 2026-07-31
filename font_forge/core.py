@@ -36,6 +36,23 @@ from font_forge.vector import (
 from font_forge.watermark import inject_forensic_watermark_in_compiled_glyphs
 
 
+def glyph_name_for(char: str) -> str:
+    """
+    Adobe-conventional glyph name for a character.
+
+    ``uniXXXX`` is defined only for four hex digits, so codepoints above the
+    Basic Multilingual Plane - cuneiform and alchemical symbols among them -
+    must use the ``uXXXXX`` form instead. Emitting ``uni12000`` produces a
+    name that tools parsing glyph names back to Unicode cannot resolve.
+    """
+    code = ord(char)
+    if char.isalnum() and code < 128:
+        return char
+    if code <= 0xFFFF:
+        return f"uni{code:04X}"
+    return f"u{code:05X}"
+
+
 class SheetToFontBuilder:
     def __init__(self, config: dict[str, Any], root: Path):
         self.config = config
@@ -92,15 +109,27 @@ class SheetToFontBuilder:
         font_meta = self.config["font"]
         fb.setupNameTable(font_meta["names"])
 
-        # Add extended name records
+        # Extended records (description, vendor URL, license) come from the
+        # config's identity block. A generic build leaves them out rather than
+        # stamping the Ethernium project into someone else's font.
+        identity = self.config.get("identity", {})
+        extended = {
+            10: identity.get("description"),
+            11: identity.get("vendor_url"),
+            13: identity.get("license_description"),
+        }
         name_table = fb.font['name']
         for plat_id, enc_id, lang_id in [(3, 1, 0x0409), (1, 0, 0)]:
-            name_table.setName("Ethernium Sym \u2014 A cyberpunk-runic display typeface.", 10, plat_id, enc_id, lang_id)
-            name_table.setName("https://github.com/EtherniumSym", 11, plat_id, enc_id, lang_id)
-            name_table.setName("Created with Ethernium Font Creator", 13, plat_id, enc_id, lang_id)
+            for name_id, value in extended.items():
+                if value:
+                    name_table.setName(value, name_id, plat_id, enc_id, lang_id)
 
     def _create_fallback_glyphs(self, glyphs: dict, glyph_order: list, cmap: dict, metrics: dict) -> None:
-        # 1. .notdef
+        # .notdef and space are universal and always present. The decorative
+        # ASCII fallbacks below are geometric shapes drawn for the Ethernium
+        # face; they are synthesized only when the config lists them by name,
+        # so a generic font is not injected with glyphs that do not match its
+        # own hand-drawn style.
         pen = TTGlyphPen(None)
         for coords in [(100, 100), (900, 100), (900, 900), (100, 900)]:
             if coords == (100, 100):
@@ -111,76 +140,53 @@ class SheetToFontBuilder:
         glyphs[".notdef"] = pen.glyph()
         metrics[".notdef"] = (1000, 100)
 
-        # 2. space (codepoint 32)
         pen_sp = TTGlyphPen(None)
         glyphs["space"] = pen_sp.glyph()
         glyph_order.append("space")
         cmap[32] = "space"
         metrics["space"] = (280, 0)
 
-        # 3. dollar (codepoint 36)
-        pen_dl = TTGlyphPen(None)
-        pen_dl.moveTo((100, 700))
-        pen_dl.lineTo((400, 700))
-        pen_dl.lineTo((400, 420))
-        pen_dl.lineTo((160, 420))
-        pen_dl.lineTo((160, 200))
-        pen_dl.lineTo((400, 200))
-        pen_dl.lineTo((400, 100))
-        pen_dl.lineTo((100, 100))
-        pen_dl.lineTo((100, 380))
-        pen_dl.lineTo((340, 380))
-        pen_dl.lineTo((340, 620))
-        pen_dl.lineTo((100, 620))
-        pen_dl.closePath()
-        pen_dl.moveTo((220, 20))
-        pen_dl.lineTo((280, 20))
-        pen_dl.lineTo((280, 780))
-        pen_dl.lineTo((220, 780))
-        pen_dl.closePath()
-        glyphs["dollar"] = pen_dl.glyph()
-        glyph_order.append("dollar")
-        cmap[36] = "dollar"
-        metrics["dollar"] = (500, 100)
+        requested = set(self.config.get("fallback_glyphs", []))
+        if not requested:
+            return
+        self._create_decorative_fallbacks(requested, glyphs, glyph_order, cmap, metrics)
 
-        # 4. asciicircum (codepoint 94)
-        pen_ac = TTGlyphPen(None)
-        pen_ac.moveTo((100, 450))
-        pen_ac.lineTo((160, 450))
-        pen_ac.lineTo((300, 650))
-        pen_ac.lineTo((440, 450))
-        pen_ac.lineTo((500, 450))
-        pen_ac.lineTo((330, 720))
-        pen_ac.lineTo((270, 720))
-        pen_ac.closePath()
-        glyphs["asciicircum"] = pen_ac.glyph()
-        glyph_order.append("asciicircum")
-        cmap[94] = "asciicircum"
-        metrics["asciicircum"] = (600, 100)
+    # Geometric ASCII fallbacks, each as (codepoint, advance, lsb, contours),
+    # where a contour is a list of on-curve points. Named so a config can
+    # request any subset by glyph name.
+    _DECORATIVE_FALLBACKS = {
+        "dollar": (36, 500, 100, [
+            [(100, 700), (400, 700), (400, 420), (160, 420), (160, 200),
+             (400, 200), (400, 100), (100, 100), (100, 380), (340, 380),
+             (340, 620), (100, 620)],
+            [(220, 20), (280, 20), (280, 780), (220, 780)],
+        ]),
+        "asciicircum": (94, 600, 100, [
+            [(100, 450), (160, 450), (300, 650), (440, 450), (500, 450),
+             (330, 720), (270, 720)],
+        ]),
+        "grave": (96, 350, 100, [
+            [(100, 580), (220, 720), (270, 680), (150, 540)],
+        ]),
+        "bar": (124, 300, 120, [
+            [(120, -100), (180, -100), (180, 800), (120, 800)],
+        ]),
+    }
 
-        # 5. grave (codepoint 96)
-        pen_gr = TTGlyphPen(None)
-        pen_gr.moveTo((100, 580))
-        pen_gr.lineTo((220, 720))
-        pen_gr.lineTo((270, 680))
-        pen_gr.lineTo((150, 540))
-        pen_gr.closePath()
-        glyphs["grave"] = pen_gr.glyph()
-        glyph_order.append("grave")
-        cmap[96] = "grave"
-        metrics["grave"] = (350, 100)
-
-        # 6. bar (codepoint 124)
-        pen_br = TTGlyphPen(None)
-        pen_br.moveTo((120, -100))
-        pen_br.lineTo((180, -100))
-        pen_br.lineTo((180, 800))
-        pen_br.lineTo((120, 800))
-        pen_br.closePath()
-        glyphs["bar"] = pen_br.glyph()
-        glyph_order.append("bar")
-        cmap[124] = "bar"
-        metrics["bar"] = (300, 120)
+    def _create_decorative_fallbacks(self, requested: set, glyphs: dict, glyph_order: list, cmap: dict, metrics: dict) -> None:
+        for name, (codepoint, advance, lsb, contours) in self._DECORATIVE_FALLBACKS.items():
+            if name not in requested:
+                continue
+            pen = TTGlyphPen(None)
+            for contour in contours:
+                pen.moveTo(contour[0])
+                for point in contour[1:]:
+                    pen.lineTo(point)
+                pen.closePath()
+            glyphs[name] = pen.glyph()
+            glyph_order.append(name)
+            cmap[codepoint] = name
+            metrics[name] = (advance, lsb)
 
     def _vectorize_contour(
         self,
@@ -210,7 +216,9 @@ class SheetToFontBuilder:
         for px, py in pts:
             abs_x, abs_y = cx1 + px, y1p + cy1 + py
             font_pts.append(
-                to_font_coord(abs_x, abs_y, x_min, baseline, scale, self.lsb)
+                to_font_coord(
+                    abs_x, abs_y, x_min, baseline, scale, self.lsb, self.units_per_em
+                )
             )
         if not self.trace_exact:
             font_pts = rdp_simplify(font_pts, epsilon=1.5)
@@ -219,12 +227,22 @@ class SheetToFontBuilder:
         return font_pts
 
     def _drop_rogue_paths(self, paths: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]:
+        """
+        Reject contours that bled in from a neighbouring row.
+
+        Limits are em-relative and leave room for real descenders (~0.25 em)
+        and accents, which fixed pixel values used to clip away.
+        """
+        floor_y = -0.40 * self.units_per_em
+        ceil_y = 1.10 * self.units_per_em
+        max_span_y = 1.25 * self.units_per_em
+
         cleaned = []
         for path in paths:
             ys = [p[1] for p in path]
-            if min(ys) < -120 or max(ys) > 1080:
+            if min(ys) < floor_y or max(ys) > ceil_y:
                 continue
-            if max(ys) - min(ys) > 980:
+            if max(ys) - min(ys) > max_span_y:
                 continue
             cleaned.append(path)
         return cleaned
@@ -284,7 +302,8 @@ class SheetToFontBuilder:
                     continue
                 fp = [
                     to_font_coord(
-                        cx1 + p[0], y1p + cy1 + p[1], x_min, baseline, scale, self.lsb
+                        cx1 + p[0], y1p + cy1 + p[1], x_min, baseline,
+                        scale, self.lsb, self.units_per_em,
                     )
                     for p in pts
                 ]
@@ -312,33 +331,30 @@ class SheetToFontBuilder:
             g2 = cmap.get(ord(char2))
             if g1 and g2 and g1 in glyphs and g2 in glyphs:
                 kern_table[(g1, g2)] = val
-        
-        pairs_to_add = [
-            ('A', 'V', -45), ('V', 'A', -45),
-            ('A', 'W', -40), ('W', 'A', -40),
-            ('A', 'Y', -45), ('Y', 'A', -45),
-            ('A', 'T', -35), ('T', 'A', -45),
-            ('F', 'A', -35), ('P', 'A', -30),
-            ('L', 'T', -40), ('L', 'V', -40),
-            ('L', 'W', -35), ('L', 'Y', -40),
-            ('T', 'O', -35), ('O', 'T', -35),
-            ('T', 'C', -30), ('C', 'T', -30),
-            ('Y', 'O', -30), ('O', 'Y', -30),
-        ]
-        
-        for c1, c2, val in pairs_to_add:
-            add_kern_pair(c1.upper(), c2.upper(), val)
-            add_kern_pair(c1.lower(), c2.lower(), val)
-            add_kern_pair(c1.upper(), c2.lower(), val)
-            add_kern_pair(c1.lower(), c2.upper(), val)
-            
-        # Special symbols kerning (Omega and Delta)
-        add_kern_pair('\u03a9', '\u0394', -25)
-        add_kern_pair('\u0394', '\u03a9', -25)
-        
+
+        # Pairs come from the config. A generic build emits no kern table
+        # unless one is supplied, since spacing tuned for the Ethernium face
+        # does not transfer to arbitrary glyphs. When ``auto_case_expand`` is
+        # set, each Latin pair is applied across all four letter-case
+        # combinations, matching the original behaviour.
+        kern_config = self.config.get("kerning", {})
+        auto_expand = kern_config.get("auto_case_expand", False)
+        for entry in kern_config.get("pairs", []):
+            c1, c2, val = entry
+            if auto_expand and c1.isalpha() and c2.isalpha():
+                add_kern_pair(c1.upper(), c2.upper(), val)
+                add_kern_pair(c1.lower(), c2.lower(), val)
+                add_kern_pair(c1.upper(), c2.lower(), val)
+                add_kern_pair(c1.lower(), c2.upper(), val)
+            else:
+                add_kern_pair(c1, c2, val)
+
         if kern_table:
             subtable.kernTable = kern_table
-            kern.subtables = [subtable]
+            # fontTools compiles from ``kernTables``; assigning ``subtables``
+            # (as this did) left the compiled kern table empty, so no shipped
+            # font ever carried a single kern pair despite building one.
+            kern.kernTables = [subtable]
             fb.font['kern'] = kern
 
     def _setup_render_tables(self, fb: FontBuilder, metrics_header: dict) -> None:
@@ -358,7 +374,7 @@ class SheetToFontBuilder:
             usWidthClass=5,
             fsType=0,
             fsSelection=0x0040,  # REGULAR bit
-            achVendID="ETHN",
+            achVendID=self.config.get("identity", {}).get("vendor_id", "    "),
         )
         fb.setupPost()
         fb.setupMaxp()
@@ -494,7 +510,7 @@ class SheetToFontBuilder:
                 if idx >= len(char_list):
                     break
                 char = char_list[idx]
-                gname = char if char.isalnum() and ord(char) < 128 else f"uni{ord(char):04X}"
+                gname = glyph_name_for(char)
 
                 cx1, cy1 = max(0, gx - margin), max(0, gy - margin)
                 cx2 = min(crop.shape[1], gx + gw + margin)
@@ -524,7 +540,7 @@ class SheetToFontBuilder:
                 max_fx = max(p[0] for p in all_pts)
                 min_fy = min(p[1] for p in all_pts)
                 max_fy = max(p[1] for p in all_pts)
-                if (max_fx - min_fx) > 1400:
+                if (max_fx - min_fx) > 1.4 * self.units_per_em:
                     print(f"  Skip '{char}': too wide")
                     continue
 
@@ -560,9 +576,11 @@ class SheetToFontBuilder:
 
                 metrics[gname] = (advance, self.lsb)
 
-        # Embed the steganographic watermark!
-        watermark_str = self.config.get("watermark", "SteveBlackbeard / FONTS-CREATOR-by-Ethernium")
-        inject_forensic_watermark_in_compiled_glyphs(glyphs, cmap, watermark_str)
+        # Optional forensic watermark, off unless the config asks for one, so a
+        # generic build carries no signature that is not the author's own.
+        watermark_str = self.config.get("watermark")
+        if watermark_str:
+            inject_forensic_watermark_in_compiled_glyphs(glyphs, cmap, watermark_str)
 
         fb.setupGlyphOrder(glyph_order)
         fb.setupGlyf(glyphs)
