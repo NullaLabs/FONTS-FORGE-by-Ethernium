@@ -1,0 +1,8 @@
+{
+  "phase": "pro",
+  "last_update": "2026-07-19T12:49:41.985395+00:00",
+  "merkle_root": "3d4fb92523bb070dc30f20176feec8bfbb9279e61a88038df7539b80e54e2ae8",
+  "leaf_format": "path-bound-v1",
+  "last_check": "2026-07-21T13:57:26.376931+00:00",
+  "signature": "f89a5f5121ea707520aaa3066ea9da52453e0167bbf55862354ff12a3ed4dbb7"
+}
