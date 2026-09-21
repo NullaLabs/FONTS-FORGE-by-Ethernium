@@ -2,8 +2,8 @@
 
 Este proyecto ha sido organizado y empaquetado de forma profesional en dos carpetas independientes:
 
-1. **[ETHERNIUM FONT](file:///C:/Users/esenc/OneDrive/Documentos/Escritorio/ETHERNIUM%20SYM/ETHERNIUM%20FONT)**: Contiene los archivos finales de la tipografía instalable (`.ttf`, `.woff`, `.woff2`), convertidores de texto y generadores de presentación para el usuario.
-2. **[ETHERNIUM FONT CREATOR](file:///C:/Users/esenc/OneDrive/Documentos/Escritorio/ETHERNIUM%20SYM/ETHERNIUM%20FONT%20CREATOR)**: Contiene el motor `font_forge` y todas las herramientas de compilación/calibración para crear nuevas tipografías desde especímenes PNG.
+1. **[ETHERNIUM FONT](<ETHERNIUM FONT/>)**: Contiene los archivos finales de la tipografía instalable (`.ttf`, `.woff`, `.woff2`), convertidores de texto y generadores de presentación para el usuario.
+2. **[ETHERNIUM FONT CREATOR](<ETHERNIUM FONT CREATOR/>)**: Contiene el motor `font_forge` y todas las herramientas de compilación/calibración para crear nuevas tipografías desde especímenes PNG.
 
 Consulta el archivo `README.md` dentro de cada carpeta para ver las instrucciones específicas.
 
@@ -54,10 +54,10 @@ python -m font_forge configs/ethernium.json
 ## Arquitectura Modular (`font_forge/`)
 
 El compilador ha sido refactorizado físicamente para aislar responsabilidades:
-*   [**vision.py**](file:///E:/font%20forge%20by%20ethernium%202/font_forge/vision.py): Procesamiento de imagen y OpenCV (binarización, cuadrículas, filtros, morfología).
-*   [**vector.py**](file:///E:/font%20forge%20by%20ethernium%202/font_forge/vector.py): Geometría Bézier, interpolación sub-píxel, simplificación RDP y restricciones de tangencia.
-*   [**watermark.py**](file:///E:/font%20forge%20by%20ethernium%202/font_forge/watermark.py): Sistema de marcas de agua forenses legibles y deterministas.
-*   [**core.py**](file:///E:/font%20forge%20by%20ethernium%202/font_forge/core.py): Orquestador minimalista y constructor de tablas OpenType (`gasp`, `kern`, `OS/2`).
+*   [**vision.py**](font_forge/vision.py): Procesamiento de imagen y OpenCV (binarización, cuadrículas, filtros, morfología).
+*   [**vector.py**](font_forge/vector.py): Geometría Bézier, interpolación sub-píxel, simplificación RDP y restricciones de tangencia.
+*   [**watermark.py**](font_forge/watermark.py): Sistema de marcas de agua forenses legibles y deterministas.
+*   [**core.py**](font_forge/core.py): Orquestador minimalista y constructor de tablas OpenType (`gasp`, `kern`, `OS/2`).
 
 ## Herramientas (`tools/`)
 
@@ -72,3 +72,7 @@ El compilador ha sido refactorizado físicamente para aislar responsabilidades:
 ## Vista previa
 
 Abre `preview_font.html` en el navegador. Muestra el estado del build leyendo `build_report.json`.
+
+## Licencia
+
+El repositorio es **source-available** bajo la licencia propia descrita en [LICENSE.txt](LICENSE.txt). No es MIT: la redistribución y la modificación están permitidas con las condiciones indicadas allí, incluida la restricción sobre la venta independiente de la fuente y sus componentes.
