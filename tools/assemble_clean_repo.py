@@ -1,18 +1,12 @@
 """
 Assemble Clean Repository Utility
 ─────────────────────────────────
-Creates a pristine, generic version of the Font Creator & Interactive Specimen
-suite in a temporary directory, ready to overwrite the remote GitHub repo
-so it only contains general tools and interfaces, with no Ethernium-specific
-backups, compiled fonts, or development sheets.
+Creates a reviewable, generic version of the Font Creator & Interactive
+Specimen suite in a local staging directory. It never initializes Git,
+publishes, or changes remote history.
 """
 import shutil
-import subprocess
 from pathlib import Path
-
-def run_cmd(cmd, cwd):
-    res = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=cwd, encoding="utf-8")
-    return res.returncode, res.stdout.strip(), res.stderr.strip()
 
 def assemble():
     root = Path(__file__).resolve().parent.parent
@@ -66,6 +60,7 @@ def assemble():
     print("[*] Copying generic files and interfaces...")
     root_files = [
         "requirements.txt",
+        "pyproject.toml",
         "build.bat",
         "LICENSE.txt",
         "INSTALL.html",
@@ -153,57 +148,21 @@ Install the Python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
-*Requires Python 3.8+ with `opencv-python`, `numpy`, `fonttools`, and `Pillow`.*
+*Requires Python 3.10+ with `opencv-python`, `numpy`, `fonttools`, and `Pillow`.*
 
 ---
 
 ## 📄 License
-This suite is open source and available under the [MIT License](LICENSE.txt).
+This suite is source-available under the custom [Ethernium Sym Font License](LICENSE.txt).
 """
     (temp_dir / "README.md").write_text(readme_content, encoding="utf-8")
     print("  ✓ Created generic README.md".replace("✓", "OK"))
 
-    # 6. Initialize git inside .temp_git_assembly
-    print("\n[*] Initializing pristine local Git repository in temp directory...")
-    run_cmd("git init", temp_dir)
-    run_cmd("git checkout -b main", temp_dir)
-    run_cmd("git config user.name \"Steve Blackbeard\"", temp_dir)
-    run_cmd("git config user.email \"SteveBlackbeard@users.noreply.github.com\"", temp_dir)
-
-    # 7. Add remote origin and push --force!
-    print("[*] Adding remote origin...")
-    remote_url = "https://github.com/SteveBlackbeard/FONTS-FORGE-by-Ethernium.git"
-    run_cmd(f"git remote add origin {remote_url}", temp_dir)
-
-    print("[*] Staging pristine files...")
-    run_cmd("git add .", temp_dir)
-    print("[*] Creating pristine release commit...")
-    commit_msg = "feat: release generic Font Creator & Visualizer Suite - full compiler engine and interactive interfaces"
-    code, out, err = run_cmd(f'git commit -m "{commit_msg}"', temp_dir)
-    if code != 0:
-        print(f"Error committing: {err}")
-        return
-
-    print("\n[*] READY FOR PUSH! Overwriting remote history with clean files...")
-    print("    Running: git push --force -u origin main")
-    
-    # Run the force push securely clearing GITHUB_TOKEN
-    import os
-    env = os.environ.copy()
-    env["GITHUB_TOKEN"] = ""
-    res = subprocess.run("git push --force -u origin main", shell=True, cwd=temp_dir, env=env, capture_output=True, text=True, encoding="utf-8")
-    
-    if res.returncode == 0:
-        print("\n========================================================")
-        print("SUCCESS! Repository has been completely cleaned up!")
-        print("  Only generic tools, engines, and interfaces are on Git.")
-        print("========================================================")
-    else:
-        print(f"\n[!] Error pushing: {res.stderr}")
-
-    # 8. Clean up temp folder
-    shutil.rmtree(temp_dir)
-    print("[*] Cleaned up local temporary directory.")
+    print("\n========================================================")
+    print("ASSEMBLY COMPLETE — REVIEW REQUIRED BEFORE PUBLISHING")
+    print(f"  Output: {temp_dir}")
+    print("  This utility does not initialize Git or publish anything.")
+    print("========================================================")
 
 if __name__ == "__main__":
     assemble()
