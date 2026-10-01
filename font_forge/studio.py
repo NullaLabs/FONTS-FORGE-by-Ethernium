@@ -16,6 +16,7 @@ import base64
 import json
 import re
 import shutil
+import sys
 import threading
 import webbrowser
 from dataclasses import dataclass
@@ -27,7 +28,11 @@ from urllib.parse import unquote, urlsplit
 from font_forge import autodetect
 from font_forge.core import SheetToFontBuilder
 
-STUDIO_DIR = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    STUDIO_DIR = Path(sys._MEIPASS) / "font_forge"
+else:
+    STUDIO_DIR = Path(__file__).resolve().parent
+
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 
 

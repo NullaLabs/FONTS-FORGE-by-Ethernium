@@ -12,7 +12,11 @@ from pathlib import Path
 from font_forge.config import load_config
 from font_forge.core import SheetToFontBuilder
 
-ROOT = Path(__file__).resolve().parent.parent
+if getattr(sys, "frozen", False):
+    ROOT = Path(sys.executable).resolve().parent
+else:
+    ROOT = Path(__file__).resolve().parent.parent
+
 DEFAULT_CONFIG = ROOT / "configs" / "ethernium.json"
 
 
@@ -35,8 +39,19 @@ def run_build(config_path: Path) -> int:
 def run_studio(args: argparse.Namespace) -> int:
     from font_forge.studio import serve
 
+    workspace = Path(args.workspace).resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 72)
+    print("   FONTS FORGE STUDIO :: Ethernium Sovereign Typography Suite")
+    print("   Compilador Tipografico Inteligente (Raster -> TTF / WOFF2)")
+    print("=" * 72)
+    print(f"\n[+] Espacio de trabajo (Salida): {workspace}")
+    print(f"[+] Servidor local: http://127.0.0.1:{args.port}/")
+    print("[+] Presiona Ctrl+C en esta consola para detener el servidor.\n")
+
     serve(
-        workspace=Path(args.workspace).resolve(),
+        workspace=workspace,
         port=args.port,
         open_browser=not args.no_browser,
     )
@@ -57,8 +72,11 @@ def main() -> int:
     build.add_argument("config", nargs="?", default=str(DEFAULT_CONFIG))
 
     # Bare `python -m font_forge [config.json]` still builds, as before.
+    # If invoked with no arguments (double click on Windows), launch Studio.
     argv = sys.argv[1:]
-    if argv and argv[0] not in {"studio", "build", "-h", "--help"}:
+    if not argv:
+        argv = ["studio"]
+    elif argv[0] not in {"studio", "build", "-h", "--help"}:
         argv = ["build", *argv]
     args = parser.parse_args(argv)
 
