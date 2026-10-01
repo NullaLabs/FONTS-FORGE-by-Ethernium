@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "font-forge-by-ethernium"
-version = "4.0.1"
+version = "4.1.0"
 description = "Raster specimen sheet to OpenType font pipeline, with automatic layout detection and a local drag-and-drop studio."
 readme = "README.md"
 requires-python = ">=3.10"
