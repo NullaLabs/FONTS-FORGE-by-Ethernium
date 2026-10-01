@@ -127,9 +127,17 @@
 
   <aside>
     <div class="card" id="rowsCard" style="display:none">
-      <h2>Rows</h2>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
+        <h2 style="margin:0">Rows</h2>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="ghost" id="presetAuto" style="padding:4px 8px; font-size:11px;" title="Auto-Match All Rows">⚡ Auto-Match</button>
+          <button type="button" class="ghost" id="presetUpper" style="padding:4px 8px; font-size:11px;" title="Fill A-Z">A-Z</button>
+          <button type="button" class="ghost" id="presetLower" style="padding:4px 8px; font-size:11px;" title="Fill a-z">a-z</button>
+          <button type="button" class="ghost" id="presetDigits" style="padding:4px 8px; font-size:11px;" title="Fill 0-9">0-9</button>
+        </div>
+      </div>
       <div id="rows"></div>
-      <div class="hint">Type what each row spells, in order. Leave a row empty to skip it.</div>
+      <div class="hint">Type what each row spells, or use quick presets above. Leave a row empty to skip it.</div>
     </div>
 
     <div class="card" id="metaCard" style="display:none">
@@ -144,7 +152,7 @@
         <div class="field"><label>Side bearing</label><input id="lsb" type="number" value="80"></div>
       </div>
       <div class="field"><label>Copyright</label><input id="copyright" placeholder="Your name"></div>
-      <div style="margin-top:14px"><button id="buildBtn">Build font</button></div>
+      <div style="margin-top:14px"><button id="buildBtn" style="width:100%; padding:12px; font-size:14px;">✨ Build Perfect Font</button></div>
       <div id="status"></div>
     </div>
 
@@ -399,6 +407,71 @@ async function refine() {
   updateTallies();
   syncRowInputs();
 }
+
+// ---------- quick presets ----------
+
+$('presetAuto').addEventListener('click', () => {
+  if (!analysis || !analysis.rows) return;
+  const presets = {
+    26: ["ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"],
+    10: ["0123456789"],
+    13: ["ABCDEFGHIJKLM", "NOPQRSTUVWXYZ", "abcdefghijklm", "nopqrstuvwxyz"],
+    14: ["ABCDEFGHIJKLMN", "abcdefghijklmn"],
+    12: ["OPQRSTUVWXYZ", "opqrstuvwxyz"],
+  };
+  const used = new Set();
+  analysis.rows.forEach((row, i) => {
+    const input = document.querySelector(`[data-chars="${i}"]`);
+    if (!input) return;
+    const opts = presets[row.boxes.length] || [];
+    let pick = opts.find(o => !used.has(o)) || "";
+    if (!pick && row.boxes.length <= 26) {
+      const candidate = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".slice(0, row.boxes.length);
+      if (!used.has(candidate)) pick = candidate;
+    }
+    if (pick) {
+      used.add(pick);
+      input.value = pick;
+    }
+  });
+  updateTallies();
+  scheduleRefine();
+});
+
+$('presetUpper').addEventListener('click', () => {
+  if (!analysis || !analysis.rows) return;
+  const targetIdx = activeRow >= 0 ? activeRow : 0;
+  const input = document.querySelector(`[data-chars="${targetIdx}"]`);
+  if (input && analysis.rows[targetIdx]) {
+    const len = analysis.rows[targetIdx].boxes.length || 26;
+    input.value = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".slice(0, len);
+    updateTallies();
+    scheduleRefine();
+  }
+});
+
+$('presetLower').addEventListener('click', () => {
+  if (!analysis || !analysis.rows) return;
+  const targetIdx = activeRow >= 0 ? activeRow : (analysis.rows.length > 1 ? 1 : 0);
+  const input = document.querySelector(`[data-chars="${targetIdx}"]`);
+  if (input && analysis.rows[targetIdx]) {
+    const len = analysis.rows[targetIdx].boxes.length || 26;
+    input.value = "abcdefghijklmnopqrstuvwxyz".slice(0, len);
+    updateTallies();
+    scheduleRefine();
+  }
+});
+
+$('presetDigits').addEventListener('click', () => {
+  if (!analysis || !analysis.rows) return;
+  const targetIdx = activeRow >= 0 ? activeRow : (analysis.rows.length > 2 ? 2 : analysis.rows.length - 1);
+  const input = document.querySelector(`[data-chars="${targetIdx}"]`);
+  if (input && analysis.rows[targetIdx]) {
+    input.value = "0123456789";
+    updateTallies();
+    scheduleRefine();
+  }
+});
 
 // ---------- build ----------
 

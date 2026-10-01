@@ -237,20 +237,47 @@ class StudioHandler(BaseHTTPRequestHandler):
 
 def suggest_rows(analysis: autodetect.SheetAnalysis) -> list[str]:
     """
-    Guess what each row spells from its glyph count.
-
-    Only a hint to save typing - the counts of the common Latin rows are
-    distinctive enough to be worth offering, and the user confirms anyway.
+    Intelligently guess what each row spells from its glyph count and multi-row patterns.
     """
+    counts = [r.glyph_count for r in analysis.rows]
+
+    # 1. Whole-sheet structural patterns
+    if counts == [13, 13]:
+        return ["ABCDEFGHIJKLM", "NOPQRSTUVWXYZ"]
+    if counts == [13, 13, 13, 13]:
+        return ["ABCDEFGHIJKLM", "NOPQRSTUVWXYZ", "abcdefghijklm", "nopqrstuvwxyz"]
+    if counts == [26, 26, 10]:
+        return ["ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz", "0123456789"]
+    if counts == [26, 10]:
+        return ["ABCDEFGHIJKLMNOPQRSTUVWXYZ", "0123456789"]
+    if counts == [13, 13, 10]:
+        return ["ABCDEFGHIJKLM", "NOPQRSTUVWXYZ", "0123456789"]
+    if counts == [14, 12]:
+        return ["ABCDEFGHIJKLMN", "OPQRSTUVWXYZ"]
+    if counts == [14, 12, 14, 12]:
+        return ["ABCDEFGHIJKLMN", "OPQRSTUVWXYZ", "abcdefghijklmn", "opqrstuvwxyz"]
+
+    # 2. Per-row matching with usage tracking
     presets = {
         26: ["ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"],
         10: ["0123456789"],
+        13: ["ABCDEFGHIJKLM", "NOPQRSTUVWXYZ", "abcdefghijklm", "nopqrstuvwxyz"],
+        14: ["ABCDEFGHIJKLMN", "abcdefghijklmn"],
+        12: ["OPQRSTUVWXYZ", "opqrstuvwxyz"],
+        16: ["0123456789ABCDEF"],
+        36: ["ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"],
+        52: ["ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"],
+        62: ["ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"],
     }
     used: set[str] = set()
     suggestions = []
     for row in analysis.rows:
         options = presets.get(row.glyph_count, [])
         pick = next((o for o in options if o not in used), "")
+        if not pick and row.glyph_count <= 26:
+            candidate = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[:row.glyph_count]
+            if candidate not in used:
+                pick = candidate
         if pick:
             used.add(pick)
         suggestions.append(pick)
