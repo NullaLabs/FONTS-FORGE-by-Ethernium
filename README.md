@@ -1,4 +1,10 @@
-# Ethernium Sym + Font Forge
+# ⚡ FONTS FORGE by Ethernium
+
+> **Compilador tipográfico inteligente · Transforma cualquier lámina o sprite de abecedario en fuentes perfectas (TTF / WOFF2)**
+
+[![Descargar Windows EXE](https://img.shields.io/badge/Descargar%20Windows-FONTS--FORGE.exe%20(v4.1.0)-00f0ff?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/NullaLabs/FONTS-FORGE-by-Ethernium/releases/download/v4.1.0/FONTS-FORGE.exe)
+[![Release](https://img.shields.io/badge/Release-v4.1.0-blue?style=for-the-badge)](https://github.com/NullaLabs/FONTS-FORGE-by-Ethernium/releases/tag/v4.1.0)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen?style=for-the-badge&logo=python&logoColor=white)](https://github.com/NullaLabs/FONTS-FORGE-by-Ethernium)
 
 Este proyecto ha sido organizado y empaquetado de forma profesional en dos carpetas independientes:
 
